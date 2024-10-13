@@ -1,7 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const mysql = require('mysql2');
+const { Pool } = require('pg');  // Importing pg's Pool for PostgreSQL connections
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,16 +11,20 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Database connection
-const db = mysql.createConnection({
+const db = new Pool({
     host: 'localhost',
-    user: 'root',
-    password: '@yush2004',
-    database: 'pokedex'
+    user: 'postgres',  // PostgreSQL user
+    password: '',  // PostgreSQL password
+    database: 'pokedex',  // PostgreSQL database name
+    port: 5432  // Default PostgreSQL port
 });
 
 db.connect((err) => {
-    if (err) throw err;
-    console.log('Connected to MySQL Database!');
+    if (err) {
+        console.error('Connection error', err.stack);
+    } else {
+        console.log('Connected to PostgreSQL Database!');
+    }
 });
 
 // Routes
@@ -28,7 +32,7 @@ db.connect((err) => {
 app.get('/pokemon', (req, res) => {
     db.query('SELECT * FROM pokemon', (err, results) => {
         if (err) throw err;
-        res.json(results);
+        res.json(results.rows);  // PostgreSQL returns rows in `rows` property
     });
 });
 
@@ -37,17 +41,17 @@ app.post('/pokemon', (req, res) => {
     const { name, type, health, attack, defense } = req.body;
 
     // Check if a Pokémon with the same name already exists
-    const checkSql = 'SELECT * FROM pokemon WHERE name = ?';
+    const checkSql = 'SELECT * FROM pokemon WHERE name = $1';  // $1 is a placeholder
     db.query(checkSql, [name], (err, results) => {
         if (err) throw err;
 
-        if (results.length > 0) {
+        if (results.rows.length > 0) {
             // Pokémon already exists
             return res.status(409).json({ error: 'A Pokémon with this name already exists.' });
         }
 
         // Insert the new Pokémon
-        const sql = 'INSERT INTO pokemon (name, type, health, attack, defense) VALUES (?, ?, ?, ?, ?)';
+        const sql = 'INSERT INTO pokemon (name, type, health, attack, defense) VALUES ($1, $2, $3, $4, $5)';
         db.query(sql, [name, type, health, attack, defense], (err) => {
             if (err) throw err;
             res.status(201).json({ message: 'Pokémon added successfully!' });
@@ -61,17 +65,17 @@ app.put('/pokemon/:id', (req, res) => {
     const { name, type, health, attack, defense } = req.body;
 
     // Check if Pokémon with the given ID exists
-    const checkSql = 'SELECT * FROM pokemon WHERE id = ?';
+    const checkSql = 'SELECT * FROM pokemon WHERE id = $1';
     db.query(checkSql, [id], (err, results) => {
         if (err) throw err;
 
-        if (results.length === 0) {
+        if (results.rows.length === 0) {
             // Pokémon not found
             return res.status(404).json({ message: 'Pokémon not found' });
         }
 
         // Update the Pokémon's data
-        const updateSql = 'UPDATE pokemon SET name = ?, type = ?, health = ?, attack = ?, defense = ? WHERE id = ?';
+        const updateSql = 'UPDATE pokemon SET name = $1, type = $2, health = $3, attack = $4, defense = $5 WHERE id = $6';
         db.query(updateSql, [name, type, health, attack, defense, id], (err) => {
             if (err) throw err;
 
@@ -87,20 +91,20 @@ app.post('/fight', (req, res) => {
     if (!pokemon1_id || !pokemon2_id) {
         return res.status(400).json({ message: 'Two Pokémon are required' });
     }
-    const sql = 'SELECT * FROM pokemon WHERE id IN (?, ?)';
+    const sql = 'SELECT * FROM pokemon WHERE id IN ($1, $2)';
     db.query(sql, [pokemon1_id, pokemon2_id], (err, results) => {
         if (err) throw err;
 
         // Check if we found both Pokémon
-        if (results.length < 2) {
+        if (results.rows.length < 2) {
             return res.status(404).json({ message: 'One or both Pokémon not found' });
         }
 
-        const [pokemon1, pokemon2] = results;
+        const [pokemon1, pokemon2] = results.rows;
         let winner = pokemon1.attack > pokemon2.attack ? pokemon1 : pokemon2;
 
         // Record the fight
-        const insertFight = 'INSERT INTO battle_history (pokemon1_id, pokemon2_id, winner_id) VALUES (?, ?, ?)';
+        const insertFight = 'INSERT INTO battle_history (pokemon1_id, pokemon2_id, winner_id) VALUES ($1, $2, $3)';
         db.query(insertFight, [pokemon1_id, pokemon2_id, winner.id], (err) => {
             if (err) {
                 return res.status(500).json({ message: 'Error recording the fight' });
@@ -133,8 +137,8 @@ app.get('/stats', (req, res) => {
                 if (err) throw err;
 
                 res.json({
-                    totalBattles: battlesResult[0].totalBattles,
-                    totalPokemon: pokemonResult[0].totalPokemon,
+                    totalBattles: battlesResult.rows[0].totalbattles,
+                    totalPokemon: pokemonResult.rows[0].totalpokemon,
                     topTrainer: trainerResult.length ? trainerResult[0].winner_trainer : "No battles yet"
                 });
             });
